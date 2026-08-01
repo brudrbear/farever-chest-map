@@ -288,3 +288,71 @@ thread"*, non-deterministically, and it has crashed the live game before. The
 only HL call in this probe is the `getMyHero` lookup, and it runs inside the
 `client.BaseCamera.postUpdate` hook — on the game thread. The 400 ms sweep does
 plain pointer and string reads and nothing else.
+
+---
+
+## The Radiance question (2026-08-01)
+
+"Radiance" is the item `Staff_Craft` — a Staff, `faction: World`, base level 4
+(item level is rolled at drop time, so a level-25 one is normal). Two other
+things in the game are also called Radiance (`Scepter_Start_Skill2` and
+`Priest_Talent_Radiance`, both skills); those are not it.
+
+**The chests people point at are `CrimsonCrate` chests.** Measured: opening
+`Z1_World_Greenlands_WorldChest_12` fired
+`WorldContext._setElementState__impl("Z1_World_Greenlands_WorldChest_12", …,
+"Opened")` exactly once. Its prefab
+(`Level/World/W1_Siagarta.dat/gameplayData/L0_+6_-7.prefab`) declares:
+
+```
+lootTable  CrimsonCrate      faction  Crimson
+zoneBaked  Z3_CrimsonIsland_Cathedral
+```
+
+The `Greenlands` in the element id is a stale level-design name — these are
+physically in Crimson Island Cathedral, which is why the zone never matched.
+
+**Radiance is reachable, and the path is intact.** `CrimsonCrate` contains no
+explicit weapon rows at all. The only weapon path is the `WorldLoot` token at
+`proba 0.35` inside `WorldCrate`, which the server expands via
+`$HItem.isWorldLoot` / `getFactionLootTable` / `generateLootTable` and
+`ent.Hero.generateWorldLootItem`. The `faction: World` pool is exactly six
+items, and Radiance is one of them:
+
+```
+Sword_Craft  Shield_Craft  Daggers_DuplicatePoison
+GA_Craft     Bow_Craft     Staff_Craft (Radiance)
+```
+
+If that generator draws uniformly, Radiance is roughly `0.35 / 6 ≈ 5.8%` per
+chest — but **that is an assumption, not a measurement**: the generator body is
+server-side and this parser deliberately does not read opcodes, so the weighting
+(and any level/aptitude filter, and the separate `WorldLootWithAffinity` token)
+is unverified.
+
+### A real anomaly, though — CrimsonCrate is the only bare faction crate
+
+Every other faction crate layers faction content on top of `WorldCrate`.
+`CrimsonCrate` does not:
+
+```
+BeeCrate      -> NatureWeights + WorldCrate
+KoboldCrate   -> Ores + EarthWeights + WorldCrate
+ManfishCrate  -> WaterWeights + WorldCrate
+DemonCrate    -> ChaosWeights + WorldCrate + Demon_Weight
+CrimsonCrate  -> WorldCrate                      <- nothing else
+```
+
+`CrimsonCrate` also never references the `Crimson` faction table, so everything
+that table would contribute — `Ramgold`, `StaleBread`, `Pumpkin`, `Cheese_Z2`,
+its own extra `WorldLoot` rolls, and `Mount_Hound_01` at `0.001` — cannot come
+out of these chests at all. That is a concrete content bug worth reporting, but
+it is **not** the Radiance bug: the `WorldCrate → WorldLoot` path that produces
+Radiance is present and unaffected.
+
+### On re-opening to test this
+
+Not built, and not buildable client-side. Measured twice: the client never
+rolls loot (every loot function stayed at zero across two sessions including a
+successful open), and the opened-record RPC *arrives* at the client from the
+authority. There is no local roll to re-run. See the section above.
