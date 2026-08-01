@@ -1,6 +1,6 @@
 """Host for chest_probe.js — the chest-open discovery spike.
 
-    py frida\\run_chest.py [seconds]
+    py frida\\run_chest.py [seconds] [path\\to\\hlboot.dat]
 
 Attaches to a running Farever and answers, by measurement:
 
@@ -52,7 +52,8 @@ def on_message(logfile):
 def main():
     # Staleness gate: a probe that mixes fresh findices with stale anchors
     # fails SILENTLY (see hltools/datafresh.py), which is the worst outcome.
-    code = HLCode(find_hlboot()).parse()
+    # argv[1] is the duration, so the optional hlboot path is argv[2].
+    code = HLCode(find_hlboot(argv_index=2)).parse()
     assert_resolver_current(code, analysis_out=OUT)
 
     data = (OUT / "resolver_data.json").read_text(encoding="utf-8")

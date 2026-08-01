@@ -13,10 +13,84 @@ argument is replaced, no game memory is written.
 
 ## Status
 
-The static analysis is done and is summarised below. The live probe is built
-and compile-checked against the running game but **has not been run yet** — the
-ordered trace it produces is what turns the section below from "strongly
-implied by the class layout" into "measured".
+Static analysis done, **and confirmed live** against the running game on
+2026-08-01 (`logs/chest-20260801-155552.log`, ~5 min, 8 chests in the layer,
+all of them already opened on that character). Results in
+"What the probe measured" below. The static section that follows it is what
+the bytecode implied; the measured section is what actually happened.
+
+---
+
+## What the probe measured (2026-08-01, live)
+
+### The detection mechanism, caught in the act
+
+Every chest streams in with `currentVisualState = null` and is then handed to
+`st.WorldContext.getElementState`. The answer to that lookup is what sets the
+visual:
+
+```
+Z1_World_Greenlands_WorldChest_41    Closed|null|1  ->  Closed|Opened|1
+Recipe_Chest_Root_11                 Closed|null|1  ->  Closed|Opened|1
+Z1_World_Greenlands_Camp_2_Chest_1   Locked|null|1  ->  Locked|Opened|1
+FightStone                           Closed|null|1  ->  Closed|Closed|1   <- not opened
+                                    (stateId|currentVisualState|enabled)
+```
+
+That `FightStone` row is the control: same code path, same streaming, and it
+resolves to `Closed` because the ledger has no entry for it. **The chest does
+not remember anything — the WorldContext does, and the chest asks.**
+
+`stateId` never moved on any of the eight, confirming the meter's earlier
+measurement. It is the CDB-authored *design* state (`Closed`, or `Locked` for
+a chest that needs a key), not runtime state. `WorldContext.getElementState`
+was called 9,218 times in five minutes, 6,303 of them carrying a single nearby
+chest — this lookup is polled continuously, not cached onto the entity.
+
+### An opened chest never even asks the server
+
+Standing directly in front of an already-opened chest, **no interact prompt
+appears at all**, and the RPC path is never entered:
+
+```
+requests that reached ent.Interactible.requestInteraction, by target:
+    InstanceOrb(POI_Rift_Entrance_3)   x1        <- a rift portal, worked fine
+    Chest(...)                          x0
+```
+
+The rift portal is the positive control that proves the hooks work: it went
+the whole way through `tryRequestInteraction -> requestInteraction ->
+checkRequestInteraction -> apiRpcRequestInteraction -> checkUse`. Chests
+reached none of it.
+
+What runs instead is the client-side gate, polled every frame:
+
+```
+PlayerController.getClosestInteractible   x11,711
+Interactible.getInteractCooldown          x52,104
+Interactible.canInteract                   x9,321
+Interactible.canActivate                   x8,547
+```
+
+For an opened chest those predicates return false, so the prompt is suppressed
+and no request is ever sent. The refusal is **client-side and silent**, ahead
+of the server ever being asked.
+
+### The client does not roll loot — measured, not argued
+
+These hooks fired **zero times** across the entire session, including during
+the real rift-portal interaction:
+
+```
+ent.Hero.generateLootItem          ent.Hero.generateWorldLootItem
+ent.Hero.resolveLootItem           ent.Hero.makeLootItem
+ent.Element.dropLootTable          st.Loadout.addItem
+st.player.Progress.incrementItemLoot
+```
+
+They exist in the binary because client and server share one Haxe codebase.
+They do not execute on the client. This is the same result the meter reached
+for item pickups, now confirmed on the chest path specifically.
 
 ---
 
@@ -107,24 +181,29 @@ The original ask was to make a chest re-openable back-to-back to sample drops.
 Based on the above, that is not something this project will do, for two
 separate reasons.
 
-**It almost certainly cannot work from the client.** The client sends
-`requestInteraction`; the authority holds the element state and rolls the loot.
-FareverMeter already measured the loot half of this directly: item grants have
-no client-side function hook at all — `st.Loadout.gainItem`,
-`st.Player.notifyItemLooted`, `ent.Hero.addInventoryDrop` and
-`rpcDoPickup` never fire on a real drop→pickup, because they are server code.
-The client only receives `st.Loadout.addItem` + hxbit replication. Re-firing a
-local interaction re-asks a question the server has already answered.
+**It cannot work from the client — this is now measured, not inferred.** There
+are two independent walls, and the probe saw both:
+
+1. The opened-ness answer comes from `WorldContext.getElementState`, which the
+   client *queries*. Forcing the local answer would flip the chest's model back
+   to `Closed` and re-show the prompt — a lie told to your own renderer. The
+   request would then go to a server that still has the real entry.
+2. The client never rolls the loot. `generateLootItem`, `resolveLootItem`,
+   `makeLootItem` and `dropLootTable` fired zero times in a session that
+   included a real, successful interaction. There is no local roll to re-run,
+   so there is nothing client-side that could produce a second sample even in
+   principle.
+
+Re-firing a local interaction re-asks a question the server has already
+answered, using a roll the client does not own.
 
 **And if some path did work, it would be a loot dupe on a live server**, not a
 test harness — real items minted into a shared economy that other players play
 in. The measurement goal does not change what the mechanism is.
 
-The probe still hooks `ent.Hero.generateLootItem` / `resolveLootItem` /
-`makeLootItem` and `ent.Element.dropLootTable`, because **their absence from a
-real chest-open trace is itself the evidence** for the paragraph above. If they
-never fire, the roll is server-side and the question is settled by measurement
-rather than by argument.
+The probe hooks those loot functions precisely because **their absence from a
+real trace is the evidence**, and that is how the question got settled — by
+measurement rather than by argument.
 
 ### What actually answers the drop-rate question
 
@@ -140,10 +219,18 @@ read the BLP ledger alongside each drop and characterise how the log changes
 the odds. That is a genuinely more interesting result than a flat drop rate,
 and nothing about it requires touching the server.
 
-`ent.interactible.Refresher`, `Gatherable.respawn` and `getRespawnTime` mean
-some interactibles legitimately come back, and `ElementScope.Player` means
-chests may be per-player — so sample volume is a routing problem, not a
-protocol problem.
+**Sample volume is a routing problem, not a protocol problem.** Chest state
+appears to be per-character — Brudr has every chest opened on the current
+character while the world still streams them in as entities — which matches
+`ElementScope.Player` and `st.Player.playerContext`, though the scope field
+itself has not been read directly yet. A fresh character therefore sees a full
+world of unopened chests. `ent.interactible.Refresher`, `Gatherable.respawn`
+and `getRespawnTime` mean some interactibles legitimately come back as well.
+
+So the practical instrument is: a logger, a route, and repetition across
+characters or respawn cycles — with `worldLootLog` read alongside each drop so
+the BLP effect can be separated from the base rate instead of silently
+contaminating it.
 
 ---
 
@@ -181,8 +268,12 @@ py frida/run_chest.py 900
 
 Wait for the `PROBE ARMED` line before touching anything in game — the hooks
 are live before that, but the local hero is not latched and the trace will not
-be attributed. Then open a chest, and afterwards try to open the *same* chest
-again so the probe can capture what the refusal looks like.
+be attributed.
+
+Note that on a character with everything already looted there is nothing to
+press: an opened chest shows **no interact prompt at all**. That is not the
+probe failing, it is the result (see the measured section above). To capture a
+successful open, run this on a character with unopened chests.
 
 `run_chest.py` aborts if `analysis_out/` was built from a different
 `hlboot.dat`. That gate exists because the failure it prevents is silent: stale
