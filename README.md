@@ -152,26 +152,48 @@ context whose scope decides whether it is per-player, per-group, or global.
 The probe hooks those three functions and prints the key and value rather than
 guessing at the StringMap layout.
 
-### 4. Drop rates in this game are deliberately **not** independent
+### 4. Bad-luck protection exists, but is **opt-in per table** — and almost nothing opts in
 
-This is the finding that matters most for the original goal.
-`st.player.HeroData` carries:
+> **CORRECTION.** An earlier revision of this file claimed drop rates in this
+> game are "deliberately not independent" as a blanket statement. That was
+> overstated. The BLP machinery is real, but reading the CDB column definitions
+> shows it is a per-table flag that hardly any table sets.
+
+`st.player.HeroData` carries `worldLootLog` (replicated) and
+`lootLogContainsItem`, and the string pool has `BLP_LootLog`, `LootLog_Size`,
+`LootLog_LevelDifference`. But the `lootTable.flags` column is declared as:
 
 ```
-worldLootLog : hl.types.ArrayObj      (replicated to the client)
-lootLogContainsItem(...)              (a predicate that reads it)
+"typeStr": "10:Weights,WithAffinity,BLP_LootLog,BLP_AlreadyOwned"
+    bit 1 = Weights          bit 4 = BLP_LootLog
+    bit 2 = WithAffinity     bit 8 = BLP_AlreadyOwned
 ```
 
-and the string pool carries `BLP_LootLog`, `LootLog_Size`,
-`LootLog_LevelDifference`, alongside the `RegisterLootLog` flag in
-`st.LootDropFlags`. **BLP = bad-luck protection.** The game keeps a rolling log
-of what you have recently looted from world sources and consults it when
-rolling the next drop.
+Across all 139 tables: **no table sets `BLP_LootLog` (4) at all**, and exactly
+one — `Rift_GearWithAffinity` (flags=10) — sets `BLP_AlreadyOwned`. Everything
+else is flags 1, 2, or none.
 
-Any drop-rate study that assumes independent rolls will produce numbers that
-are wrong in a specific, structured way — and re-sampling the *same* chest as
-fast as possible is exactly the sampling scheme most distorted by a
-recency-based pity/dedup system.
+So for the world/faction crates, **rolls are independent**. BLP is a rift-gear
+mechanism, not a global one.
+
+### 5. `Weights` is the flag that changes how a table is read
+
+Bit 1 (`Weights`) means *pick one row, weighted by `proba`*. Without it, **each
+row rolls independently on its own `proba`**. This is what makes the container
+tables composable:
+
+```
+WorldCrate    flags=none  -> every row rolls: CurrencyCrate(1), HumanoidWeights(1) x2,
+                             WorldLoot(0.35), GatherSamplesWeight(0.25),
+                             WorldRecipeWithJob(0.2), Mastery(0.05),
+                             SkillPointBook_Red(0.08), TPDeathStone(0.1)
+HumanoidWeights, Ores, Gems, Clothes, *Weights, boss tables …  flags=1 -> pick one
+```
+
+Every faction crate includes `WorldCrate` at `proba 1`, and none of the crates
+set `Weights` — so `WorldLoot` fires at exactly **0.35 in all of them**.
+`CrimsonCrate` being a bare passthrough means it yields *less* than its
+siblings, not that its `WorldLoot` roll is likelier.
 
 ---
 
@@ -356,3 +378,39 @@ Not built, and not buildable client-side. Measured twice: the client never
 rolls loot (every loot function stayed at zero across two sessions including a
 successful open), and the opened-record RPC *arrives* at the client from the
 authority. There is no local roll to re-run. See the section above.
+
+### Is Radiance Crimson-exclusive? No — three reasons
+
+1. **Every faction crate has the same `WorldLoot` roll.** They all include
+   `WorldCrate` at `proba 1`, and none set `Weights`, so the 0.35 is identical
+   across `CrimsonCrate`, `BeeCrate`, `KoboldCrate`, `ManfishCrate` and
+   `DemonCrate`. CrimsonCrate's missing faction table removes Crimson content;
+   it does not raise the weapon chance.
+
+2. **Plain `WorldCrate` chests are the most common kind.** Counting `lootTable`
+   references in the world prefabs that contain chests:
+
+   ```
+   WorldCrate 69   WorldActivity 27   CrimsonCrate 15   CrimsonActivity 9
+   BeeCrate    8   KoboldActivity 5   ManfishCrate  4   BeeActivity     4
+   ManfishActivity 3   DemonActivity 2   KoboldCrate 2
+   Vault_Z1_1 / Z2_1 / Z2_3 / Z3_1 / Z3_2 …   Ramburg_1..5
+   ```
+
+   A plain `WorldCrate` chest has exactly the same Radiance odds and there are
+   over four times as many of them.
+
+3. **The Ramburg chests cannot drop it at all.** `Ramburg_1` … `Ramburg_5` are
+   deterministic glider chests — `Gold` and one specific Pigeon glider, both at
+   `proba 1`, no `WorldLoot`, no weapons:
+
+   ```
+   Ramburg_1  Gold + Glider_Pigeon_Beige   "Swift"
+   Ramburg_2  Gold + Glider_Pigeon_Blue    "Rigtheous"
+   Ramburg_3  Gold + Glider_Pigeon_Grey    "Valiant"
+   Ramburg_4  Gold + Glider_Pigeon_Grey02  "Loyal"
+   Ramburg_5  Gold + Glider_Pigeon_Purple  "Gourmet"
+   ```
+
+   So the "chests in Ramburg that drop level-25 Radiance" report does not match
+   the data at all — those five are the collectible glider chests.
