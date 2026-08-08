@@ -1,8 +1,12 @@
 # farever-chest-map
 
 **Every chest in Farever's open world, plotted on the game's own map, with what
-each one can actually drop.** Open [`report/chest_map.html`](report/chest_map.html)
-— it is a single self-contained file. No server, no network, no install.
+each one can actually drop.**
+
+### → [Open the map](https://brudrbear.github.io/farever-chest-map/)
+
+Or grab [`report/chest_map.html`](report/chest_map.html) and open it locally —
+it is a single self-contained file. No server, no network, no install.
 
 ![The chest map](docs/screenshot.png)
 
