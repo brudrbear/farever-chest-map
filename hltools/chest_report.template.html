@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farever — world chest map</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b24; --panel2: #1b232e; --line: #263041;
+    --ink: #e6edf3; --ink2: #9aa7b8; --ink3: #6b7889; --accent: #f5b301;
+    --ok: #34d399;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink); overflow: hidden;
+    font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  #app { display: grid; grid-template-columns: 360px 1fr; flex: 1; min-height: 0; }
+
+  /* ---------------- rebuild strip ---------------- */
+  #top {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 7px 14px; background: #11161f; border-bottom: 1px solid var(--line);
+    font-size: 12px; color: var(--ink3);
+  }
+  #top .built b { color: var(--ink2); font-weight: 500; }
+  code {
+    font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    background: #0b0f16; border: 1px solid var(--line); border-radius: 5px;
+    padding: 2px 7px; color: #cbd5e1; white-space: nowrap;
+  }
+  #top button, #steps button {
+    background: var(--panel2); color: var(--ink2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 8px; font: inherit; font-size: 11px;
+    cursor: pointer;
+  }
+  #top button:hover, #steps button:hover { color: var(--ink); border-color: #3a4757; }
+  #top .sep { margin-left: auto; }
+  /* collapsed it rides on the same line; opened it takes a row of its own */
+  details#steps { width: auto; }
+  details#steps[open] { flex-basis: 100%; }
+  details#steps summary {
+    cursor: pointer; color: var(--ink3); font-size: 11.5px; padding: 2px 0;
+    list-style: revert;
+  }
+  details#steps summary:hover { color: var(--ink2); }
+  details#steps ol { margin: 6px 0 2px; padding-left: 20px; line-height: 1.9; }
+  details#steps li { color: var(--ink2); }
+  details#steps .why { color: var(--ink3); font-size: 11.5px; margin: 4px 0 0; }
+
+  /* ---------------- sidebar ---------------- */
+  #side {
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  #side header { padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--ink3); font-size: 12px; }
+  .stats { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .pill {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 99px;
+    padding: 3px 9px; font-size: 11px; color: var(--ink2);
+  }
+  .pill b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .controls { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  input[type=search], select {
+    width: 100%; background: var(--panel2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px;
+    font: inherit; font-size: 13px;
+  }
+  input[type=search]::placeholder { color: var(--ink3); }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  label.chk {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 12.5px; color: var(--ink2); user-select: none;
+  }
+  label.chk:hover { color: var(--ink); }
+  input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+  .legend { padding: 10px 16px 14px; border-bottom: 1px solid var(--line); }
+  .legend h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--ink3); margin: 0 0 8px; font-weight: 600;
+  }
+  .cat { display: flex; align-items: center; gap: 8px; padding: 2.5px 0; }
+  .cat .n {
+    margin-left: auto; color: var(--ink3); font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+         box-shadow: 0 0 0 1.5px rgba(0,0,0,.6); }
+
+  #list { overflow-y: auto; flex: 1; min-height: 0; }
+  .item {
+    padding: 8px 16px; border-bottom: 1px solid #1c2431; cursor: pointer;
+    display: grid; grid-template-columns: 12px 1fr auto; gap: 9px;
+    align-items: baseline;
+  }
+  .item:hover { background: var(--panel2); }
+  .item.sel { background: #1f2937; box-shadow: inset 3px 0 0 var(--accent); }
+  .item .nm { font-size: 12.5px; }
+  .item .zn { color: var(--ink3); font-size: 11px; }
+  .item .wl {
+    font-size: 11px; color: var(--ink2); font-variant-numeric: tabular-nums;
+  }
+  .item .wl.g { color: var(--ok); }
+  .empty { padding: 24px 16px; color: var(--ink3); font-size: 13px; }
+
+  /* ---------------- map ---------------- */
+  #map { position: relative; overflow: hidden; background: #070a0f;
+         cursor: grab; touch-action: none; user-select: none; }
+  #map.drag { cursor: grabbing; }
+  #world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  /* pointer-events:none matters: without it the browser starts its own native
+     image drag, which eats the pointerup and leaves the map stuck to the
+     cursor until the next click. */
+  #world img { display: block; width: 100%; height: 100%; image-rendering: auto;
+               pointer-events: none; user-select: none; -webkit-user-drag: none; }
+  .mk {
+    position: absolute; width: 14px; height: 14px; border-radius: 50%;
+    margin: -7px 0 0 -7px; border: 1.5px solid rgba(0,0,0,.75);
+    transform: scale(var(--iz)); cursor: pointer;
+  }
+  .mk.act { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; opacity: .75;
+            border-radius: 50%; background: transparent !important;
+            border: 2px solid currentColor; }
+  .mk.hide { display: none; }
+  .mk.sel {
+    outline: 2px solid #fff; outline-offset: 2px; z-index: 5;
+    box-shadow: 0 0 0 6px rgba(245,179,1,.25);
+  }
+  #tip {
+    position: absolute; pointer-events: none; z-index: 20; display: none;
+    background: rgba(13,17,23,.96); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 9px; font-size: 12px; max-width: 260px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  }
+  #tip .t2 { color: var(--ink3); font-size: 11px; }
+
+  #detail {
+    position: absolute; right: 14px; bottom: 14px; width: 320px; z-index: 15;
+    background: rgba(21,27,36,.97); border: 1px solid var(--line);
+    border-radius: 10px; display: none; max-height: min(560px, calc(100% - 90px));
+    flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.55);
+  }
+  #detail.on { display: flex; }
+  #detail .hd { padding: 11px 13px; border-bottom: 1px solid var(--line); }
+  #detail .hd .id { font-size: 13px; word-break: break-all; }
+  #detail .hd .meta { color: var(--ink3); font-size: 11.5px; margin-top: 3px; }
+  #detail .bd { overflow-y: auto; padding: 10px 13px 13px; }
+  #close {
+    position: absolute; top: 7px; right: 8px; background: none; border: 0;
+    color: var(--ink3); font-size: 17px; cursor: pointer; line-height: 1;
+  }
+  #close:hover { color: var(--ink); }
+  .coord {
+    display: flex; align-items: center; gap: 7px; margin-top: 8px;
+    font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink2);
+  }
+  .coord button {
+    background: var(--panel2); color: var(--ink2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 11px;
+    cursor: pointer;
+  }
+  .coord button:hover { color: var(--ink); border-color: #3a4757; }
+  .uniq {
+    background: #1d2432; border: 1px solid #33405a; border-left: 3px solid #fff;
+    border-radius: 6px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px;
+  }
+  .uniq .p { color: var(--ink3); font-size: 11px; }
+  .star { color: #fff; font-size: 10px; margin-left: 3px; }
+  .lt { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+        font-size: 12px; align-items: center; }
+  .lt .p { color: var(--ink2); font-variant-numeric: tabular-nums; }
+  .lt .wl { color: var(--accent); }
+  .bar { grid-column: 1 / -1; height: 3px; background: #222c3a;
+         border-radius: 2px; margin: 0 0 5px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: #3b82f6; }
+  .bar i.wl { background: var(--accent); }
+  h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+       color: var(--ink3); margin: 12px 0 7px; font-weight: 600; }
+  .note { color: var(--ink3); font-size: 11px; margin-top: 10px;
+          border-top: 1px solid var(--line); padding-top: 9px; }
+
+  #zoombar { position: absolute; left: 14px; bottom: 14px; z-index: 15;
+             display: flex; gap: 6px; }
+  #zoombar button {
+    width: 30px; height: 30px; border-radius: 7px; cursor: pointer;
+    background: rgba(21,27,36,.95); color: var(--ink2);
+    border: 1px solid var(--line); font-size: 15px; line-height: 1;
+  }
+  #zoombar button:hover { color: var(--ink); }
+  #zoombar button.w { width: auto; padding: 0 10px; font-size: 12px; }
+
+  @media (max-width: 860px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+    #side { border-right: 0; border-bottom: 1px solid var(--line); }
+    #detail { width: auto; left: 14px; }
+  }
+</style>
+</head>
+<body>
+<div id="top">
+  <span class="built">Built <b id="t-built">—</b> from <b id="t-counts">—</b>
+    · data.cdb <b id="t-sha">—</b></span>
+  <span>Rebuild:</span>
+  <code id="t-cmd">py hltools/build_chest_report.py</code>
+  <button id="t-copy">copy</button>
+  <span class="sep"></span>
+  <details id="steps">
+    <summary>After a game patch, run these first</summary>
+    <ol>
+      <li><code>py hltools/pak_extract.py extract data.cdb --pak
+        "&lt;Farever&gt;\res.light.pak" --out analysis_out/cdb</code>
+        — the loot tables</li>
+      <li><code>py hltools/build_map_assets.py</code> (in FareverMeter)
+        — only if the world map itself changed</li>
+      <li><code>py hltools/build_chest_report.py</code> — rewrites this page</li>
+    </ol>
+    <p class="why">The prefab dump in <code>analysis_out/prefabs_map/</code> comes
+      from <code>res.map.pak</code> and changes only when the world does. Every
+      number on this page is baked in at build time — nothing here reads the
+      game, so a page built before a patch will keep showing the old world
+      without complaining. The data.cdb hash above is how you tell.</p>
+  </details>
+</div>
+<div id="app">
+  <aside id="side">
+    <header>
+      <h1>Farever — world chests</h1>
+      <div class="sub">Placed chests in W1 Siagarta, straight from the game's
+        level prefabs and loot tables.</div>
+      <div class="stats">
+        <span class="pill"><b id="s-shown">0</b> shown</span>
+        <span class="pill"><b id="s-chests">0</b> chests</span>
+        <span class="pill"><b id="s-world">0</b> can drop world loot</span>
+        <span class="pill"><b id="s-uniq">0</b> ★ fixed item</span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search id, zone, or item…">
+      <div class="row"><select id="zone"></select></div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="onlyWorld">
+          Only world-loot chests</label>
+      </div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="onlyUniq">
+          Only chests with a fixed item ★</label>
+      </div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="showAct">
+          Show activities (elites, fight stones…)</label>
+      </div>
+    </div>
+
+    <div class="legend">
+      <h2>Chest types</h2>
+      <div id="cats"></div>
+    </div>
+
+    <div id="list"></div>
+  </aside>
+
+  <div id="map">
+    <div id="world"><img src="__MAP_SRC__" alt="World map" draggable="false"></div>
+    <div id="tip"></div>
+    <div id="zoombar">
+      <button id="zin" title="Zoom in">+</button>
+      <button id="zout" title="Zoom out">−</button>
+      <button id="zfit" class="w" title="Fit map">Fit</button>
+    </div>
+    <div id="detail">
+      <button id="close" title="Close">×</button>
+      <div class="hd">
+        <div class="id" id="d-id"></div>
+        <div class="meta" id="d-meta"></div>
+        <div class="coord">
+          <span id="d-xyz"></span>
+          <button id="d-copy">copy</button>
+        </div>
+      </div>
+      <div class="bd">
+        <div id="d-uniq"></div>
+        <h3>Drops <span id="d-tbl" style="text-transform:none"></span></h3>
+        <div class="lt" id="d-loot"></div>
+        <div id="d-pool"></div>
+        <div class="note" id="d-note"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = '__DATA__';
+const L = 2400;                                  // logical map size in px
+
+/* ---------- category taxonomy, derived from the loot table id ---------- */
+const CATS = [
+  {k:'world',   c:'#f5b301', t:'World crate'},
+  {k:'crimson', c:'#ef4444', t:'Crimson crate'},
+  {k:'bee',     c:'#a3e635', t:'Bee crate'},
+  {k:'kobold',  c:'#f97316', t:'Kobold crate'},
+  {k:'manfish', c:'#22d3ee', t:'Manfish crate'},
+  {k:'demon',   c:'#a855f7', t:'Demon crate'},
+  {k:'activity',c:'#34d399', t:'Activity chest (guaranteed)'},
+  {k:'vault',   c:'#60a5fa', t:'Vault (glider)'},
+  {k:'ramburg', c:'#f472b6', t:'Ramburg (glider)'},
+  {k:'empty',   c:'#94a3b8', t:'Empty'},
+];
+const COLOR = Object.fromEntries(CATS.map(c => [c.k, c.c]));
+
+function catOf(r) {
+  const t = r.table;
+  if (t.startsWith('Vault_')) return 'vault';
+  if (t.startsWith('Ramburg_')) return 'ramburg';
+  if (t === 'Empty_LootTable') return 'empty';
+  if (t.endsWith('Activity')) return r.kind === 'element' ? 'activity'
+    : t.replace('Activity','').toLowerCase() || 'world';
+  if (t === 'WorldCrate') return 'world';
+  return t.replace('Crate','').toLowerCase();
+}
+
+const rows = DATA.placements.map((r, i) => ({
+  ...r, i, cat: catOf(r), world: DATA.loot[r.table].world,
+}));
+const chests = rows.filter(r => r.kind === 'element');
+const acts   = rows.filter(r => r.kind !== 'element');
+
+/* ---------- markers ---------- */
+const world = document.getElementById('world');
+const mapEl = document.getElementById('map');
+const tip = document.getElementById('tip');
+rows.forEach(r => {
+  const d = document.createElement('div');
+  d.className = 'mk' + (r.kind === 'element' ? '' : ' act');
+  d.style.left = (r.fx * 100) + '%';
+  d.style.top  = (r.fy * 100) + '%';
+  const col = COLOR[r.cat] || '#94a3b8';
+  if (r.kind === 'element') d.style.background = col; else d.style.color = col;
+  if (r.unique.length) d.style.borderColor = '#fff';   // hand-placed item
+  d.dataset.i = r.i;
+  r.el = d;
+  world.appendChild(d);
+});
+
+/* ---------- pan / zoom ---------- */
+let z = 1, tx = 0, ty = 0, fit = 1, sized = false;
+function apply() {
+  world.style.transform = `translate(${tx}px,${ty}px) scale(${z})`;
+  world.style.setProperty('--iz', 1 / z);
+}
+function fitView() {
+  const r = mapEl.getBoundingClientRect();
+  if (!r.width || !r.height) return;      // pane not laid out yet
+  sized = true;
+  fit = Math.min(r.width, r.height) / L;
+  z = fit;
+  tx = (r.width - L * z) / 2;
+  ty = (r.height - L * z) / 2;
+  apply();
+}
+function zoomAt(cx, cy, f) {
+  const nz = Math.min(fit * 14, Math.max(fit * 0.9, z * f));
+  tx = cx - (cx - tx) * (nz / z);
+  ty = cy - (cy - ty) * (nz / z);
+  z = nz; apply();
+}
+world.style.width = world.style.height = L + 'px';
+// Fit once, as soon as the map actually has a size — a hidden or still-laying-
+// out pane reports 0x0, which would bake scale(0) in permanently.
+new ResizeObserver(() => { if (!sized) fitView(); }).observe(mapEl);
+
+mapEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = mapEl.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.18 : 1 / 1.18);
+}, {passive: false});
+
+// Drag lasts exactly as long as the button is held. Capture is taken only once
+// the pointer has actually moved, because a captured pointer retargets the
+// click to the capturing element — which would swallow every marker click.
+let drag = null;
+mapEl.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  drag = {id: e.pointerId, x: e.clientX, y: e.clientY, tx, ty,
+          moved: false, cap: false};
+});
+mapEl.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved) {
+    if (Math.abs(dx) + Math.abs(dy) <= 4) return;
+    drag.moved = true;
+    mapEl.classList.add('drag');
+    tip.style.display = 'none';
+    try { mapEl.setPointerCapture(drag.id); drag.cap = true; } catch (_) {}
+  }
+  tx = drag.tx + dx; ty = drag.ty + dy; apply();
+});
+
+function endDrag(e) {
+  if (!drag) return;
+  const clicked = !drag.moved;
+  if (drag.cap) { try { mapEl.releasePointerCapture(drag.id); } catch (_) {} }
+  drag = null;
+  mapEl.classList.remove('drag');
+  if (!clicked || !e) return;
+  // hit-test where the button came up, not e.target — capture and the map
+  // image both make e.target unreliable here
+  const m = document.elementFromPoint(e.clientX, e.clientY);
+  const mk = m && m.closest && m.closest('.mk');
+  if (mk) select(rows[+mk.dataset.i], false);
+}
+addEventListener('pointerup', endDrag);
+addEventListener('pointercancel', () => endDrag(null));
+addEventListener('blur', () => endDrag(null));
+
+document.getElementById('zin').onclick = () => {
+  const r = mapEl.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1.4); };
+document.getElementById('zout').onclick = () => {
+  const r = mapEl.getBoundingClientRect(); zoomAt(r.width/2, r.height/2, 1/1.4); };
+document.getElementById('zfit').onclick = fitView;
+
+/* ---------- hover + select ---------- */
+let sel = null;
+mapEl.addEventListener('mousemove', e => {
+  const m = e.target.closest('.mk');
+  if (!m || drag) { tip.style.display = 'none'; return; }
+  const r = rows[+m.dataset.i];
+  const rc = mapEl.getBoundingClientRect();
+  tip.innerHTML = `<div>${r.label || r.id}</div>
+    <div class="t2">${r.table} · ${r.zone || 'no zone'}</div>`;
+  tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX - rc.left + 14, rc.width - 270) + 'px';
+  tip.style.top  = (e.clientY - rc.top + 14) + 'px';
+});
+function select(r, center) {
+  if (sel) { sel.el.classList.remove('sel'); }
+  sel = r;
+  history.replaceState(null, '', '#id=' + encodeURIComponent(r.id));
+  r.el.classList.add('sel');
+  document.querySelectorAll('.item.sel').forEach(n => n.classList.remove('sel'));
+  const li = document.querySelector(`.item[data-i="${r.i}"]`);
+  if (li) { li.classList.add('sel'); li.scrollIntoView({block:'nearest'}); }
+  if (center) {
+    const rc = mapEl.getBoundingClientRect();
+    if (z < fit * 3) z = fit * 3;
+    tx = rc.width / 2 - r.fx * L * z;
+    ty = rc.height / 2 - r.fy * L * z;
+    apply();
+  }
+  showDetail(r);
+}
+
+/* ---------- detail card ---------- */
+const D = id => document.getElementById(id);
+D('close').onclick = () => D('detail').classList.remove('on');
+function pct(p) { return (p >= 1 ? '100' : (p * 100).toFixed(p < 0.1 ? 1 : 0)) + '%'; }
+
+function showDetail(r) {
+  const t = DATA.loot[r.table];
+  D('detail').classList.add('on');
+  D('d-id').textContent = r.label || r.id;
+  D('d-meta').textContent = [r.id !== (r.label || r.id) ? r.id : null,
+    r.zone, r.kind === 'element' ? (r.src || 'chest') : r.inherit]
+    .filter(Boolean).join(' · ');
+  // one placement in the world has no z on its object node
+  D('d-xyz').textContent = [['x', r.x], ['y', r.y], ['z', r.z]]
+    .filter(([, v]) => v !== null && v !== undefined)
+    .map(([k, v]) => `${k} ${v}`).join('   ');
+  D('d-copy').onclick = () => navigator.clipboard
+    .writeText([r.x, r.y, r.z].filter(v => v !== null && v !== undefined).join(', '))
+    .then(() => { D('d-copy').textContent = 'copied';
+      setTimeout(() => D('d-copy').textContent = 'copy', 1200); });
+  D('d-uniq').innerHTML = r.unique && r.unique.length ? `
+    <h3>Always in this chest</h3>
+    ${r.unique.map(u => `<div class="uniq">
+      <div class="nm">★ ${u.name}${u.quantity > 1 ? ' ×' + u.quantity : ''}
+        <span class="p">${[u.type, u.rarity].filter(Boolean).join(' · ')}</span></div>
+      ${u.needs ? `<div class="p">fill with ${u.needs.join(', ')} → ${
+        (u.gives || []).join(', ')}</div>` : ''}
+    </div>`).join('')}` : '';
+  D('d-tbl').textContent = '· ' + r.table
+    + (r.level ? ' · chest level ' + r.level : '');
+  D('d-loot').innerHTML = t.rows.map(x => {
+    const wl = x.id.startsWith('WorldLoot');
+    const q = x.qty ? ` ×${x.qty[0]}–${x.qty[1]}` : '';
+    return `<span class="${wl ? 'wl' : ''}">${x.name}${q}${
+      x.conds ? ` <span class="p">(${x.conds})</span>` : ''}</span>
+      <span class="p">${pct(x.p)}</span>
+      <span class="bar"><i class="${wl ? 'wl' : ''}"
+        style="width:${Math.max(2, x.p * 100)}%"></i></span>`;
+  }).join('');
+  D('d-pool').innerHTML = t.world ? `
+    <h3>WorldLoot expands to</h3>
+    <div class="lt">${DATA.pool.map(p =>
+      `<span>${p.name}</span><span class="p">${p.type} · lvl ${p.level}</span>`
+    ).join('')}</div>` : '';
+  D('d-note').textContent = t.world
+    ? `The WorldLoot token lands at ${pct(t.world)}. The server picks from the `
+      + `faction: World pool above (item level is rolled at drop time). The `
+      + `weighting inside the pool is server-side and unverified — if it were `
+      + `uniform each weapon would be about ${pct(t.world / DATA.pool.length)}.`
+    : 'No WorldLoot token in this table — this chest cannot drop the world '
+      + 'weapon pool at all.';
+}
+
+/* ---------- filters ---------- */
+const q = D('q'), zoneSel = D('zone'), onlyWorld = D('onlyWorld'),
+      onlyUniq = D('onlyUniq'), showAct = D('showAct'), listEl = D('list'),
+      catsEl = D('cats');
+const catOn = Object.fromEntries(CATS.map(c => [c.k, true]));
+
+catsEl.innerHTML = CATS.map(c => `
+  <label class="cat chk"><input type="checkbox" data-k="${c.k}" checked>
+    <span class="dot" style="background:${c.c}"></span>${c.t}
+    <span class="n">${chests.filter(r => r.cat === c.k).length}</span></label>`
+).join('');
+catsEl.onchange = e => { catOn[e.target.dataset.k] = e.target.checked; render(); };
+
+const zones = [...new Set(chests.map(r => r.zone).filter(Boolean))].sort();
+zoneSel.innerHTML = '<option value="">All zones</option>' +
+  zones.map(z => `<option>${z}</option>`).join('');
+
+[q, zoneSel, onlyWorld, onlyUniq, showAct].forEach(el =>
+  el.addEventListener('input', render));
+
+function matches(r) {
+  if (r.kind !== 'element') return showAct.checked;
+  if (!catOn[r.cat]) return false;
+  if (onlyWorld.checked && !r.world) return false;
+  if (onlyUniq.checked && !r.unique.length) return false;
+  if (zoneSel.value && r.zone !== zoneSel.value) return false;
+  const s = q.value.trim().toLowerCase();
+  if (!s) return true;
+  const hay = [r.id, r.zone, r.table, r.label, r.faction]
+    .concat(r.unique.map(u => u.name + ' ' + u.item))
+    .concat(DATA.loot[r.table].rows.map(x => x.name))
+    // a world-loot chest can pay any of the pool, so let those names match too
+    .concat(r.world ? DATA.pool.map(p => p.name) : [])
+    .join(' ').toLowerCase();
+  return hay.includes(s);
+}
+
+function render() {
+  const shown = [];
+  rows.forEach(r => {
+    const ok = matches(r);
+    r.el.classList.toggle('hide', !ok);
+    if (ok && r.kind === 'element') shown.push(r);
+  });
+  shown.sort((a, b) => (a.zone || '').localeCompare(b.zone || '')
+    || a.id.localeCompare(b.id));
+  D('s-shown').textContent = shown.length;
+  D('s-chests').textContent = chests.length;
+  D('s-world').textContent = chests.filter(r => r.world).length;
+  D('s-uniq').textContent = chests.filter(r => r.unique.length).length;
+  listEl.innerHTML = shown.length ? shown.map(r => `
+    <div class="item${sel === r ? ' sel' : ''}" data-i="${r.i}">
+      <span class="dot" style="background:${COLOR[r.cat]}"></span>
+      <span><span class="nm">${r.label || shortId(r.id)}</span>${
+        r.unique.length ? '<span class="star">★</span>' : ''}<br>
+        <span class="zn">${r.zone || '—'} · ${r.table}</span></span>
+      <span class="wl ${r.world >= 1 ? 'g' : ''}">${
+        r.world ? pct(r.world) : '—'}</span>
+    </div>`).join('') : '<div class="empty">Nothing matches that filter.</div>';
+  [...listEl.children].forEach(n => n.onclick = () => {
+    if (n.dataset.i) select(rows[+n.dataset.i], true); });
+}
+function shortId(id) { return id.replace(/^Z1_World_Greenlands_|^W1_Siagarta_/, ''); }
+
+/* ---------- build stamp ---------- */
+D('t-built').textContent = DATA.meta.built;
+D('t-counts').textContent = `${DATA.meta.chests} chests + `
+  + `${DATA.meta.activities} activities`;
+D('t-sha').textContent = DATA.meta.cdb_sha;
+D('t-copy').onclick = () => navigator.clipboard
+  .writeText(D('t-cmd').textContent)
+  .then(() => { D('t-copy').textContent = 'copied';
+    setTimeout(() => D('t-copy').textContent = 'copy', 1200); });
+
+fitView();
+render();
+
+// #id=<element id> deep-links a single chest, so a link can point at one.
+const want = decodeURIComponent((location.hash.match(/#id=(.+)$/) || [])[1] || '');
+if (want) {
+  const r = rows.find(x => x.id === want);
+  if (r) select(r, true);
+}
+</script>
+</body>
+</html>

@@ -34,9 +34,6 @@ import struct
 import sys
 from pathlib import Path
 
-DEFAULT_PAK = Path(r"E:\SteamLibrary\steamapps\common\Farever\res.pak")
-
-
 class Entry:
     __slots__ = ("path", "pos", "size", "checksum")
 
@@ -131,17 +128,22 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("list", help="list entries, largest first")
-    p.add_argument("--pak", type=Path, default=DEFAULT_PAK)
+    p.add_argument("--pak", type=Path, default=None,
+                   help="defaults to res.pak next to hlboot.dat")
     p.add_argument("--filter", help="case-insensitive substring of the path")
     p.add_argument("--min-size", type=int, default=0)
     p.set_defaults(fn=cmd_list)
     p = sub.add_parser("extract", help="extract entries matching a pattern")
     p.add_argument("pattern")
-    p.add_argument("--pak", type=Path, default=DEFAULT_PAK)
+    p.add_argument("--pak", type=Path, default=None,
+                   help="defaults to res.pak next to hlboot.dat")
     p.add_argument("--out", type=Path,
                    default=Path(__file__).parent / "pak_out")
     p.set_defaults(fn=cmd_extract)
     args = ap.parse_args()
+    if args.pak is None:
+        from gamepath import find_pak
+        args.pak = find_pak("res.pak")
     args.fn(args)
 
 

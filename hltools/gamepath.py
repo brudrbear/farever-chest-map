@@ -25,7 +25,24 @@ def find_hlboot(argv_index: int = 1) -> str:
         if p.is_file():
             return str(p)
         raise SystemExit(f"[!] file not found: {p}")
+    return _scan()
 
+
+def game_dir() -> Path:
+    """The Farever install directory. Same resolution minus the argv step —
+    tools with their own argparse must not eat sys.argv[1]."""
+    return Path(_scan()).parent
+
+
+def find_pak(name: str) -> Path:
+    """Locate a pak (res.pak, res.light.pak, res.map.pak) next to hlboot.dat."""
+    p = game_dir() / name
+    if not p.is_file():
+        raise SystemExit(f"[!] {name} not found in {p.parent}")
+    return p
+
+
+def _scan() -> str:
     env = os.environ.get("FAREVER_HLBOOT")
     if env:
         if Path(env).is_file():

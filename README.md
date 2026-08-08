@@ -1,23 +1,98 @@
-# FareverChest
+# farever-chest-map
 
-A standalone spike into **how Farever decides a chest has been opened**, and
-what that means for measuring drop rates. Separate project, separate directory,
-but it reuses the machinery FareverMeter paid for: the HashLink bytecode parser,
-the `functions_ptrs` resolver, the name-resolved offset emitter, the staleness
-gate, and the game-thread rule.
+**Every chest in Farever's open world, plotted on the game's own map, with what
+each one can actually drop.** Open [`report/chest_map.html`](report/chest_map.html)
+— it is a single self-contained file. No server, no network, no install.
 
-Everything here is **read-only**. Every Interceptor logs; nothing is called, no
-argument is replaced, no game memory is written.
+![The chest map](docs/screenshot.png)
+
+144 chests across W1 Siagarta, read out of the game's level prefabs and loot
+tables rather than crowd-sourced. For each one: the flattened loot table with
+probabilities, the world coordinates, the chest level, and whether it can drop
+the world weapon pool at all.
+
+- **Filter** by chest type, zone, "can drop world loot", or "has a fixed item".
+- **Search** by id, zone, or any item it can pay — typing `Radiance` lights up
+  the 128 chests whose table carries the `WorldLoot` token.
+- **Click** a chest, on the map or in the list, for its full drop table.
+- **Link** to one with `#id=<element id>`.
+- **19 chests** carry a hand-placed guaranteed item on top of their table
+  (marked ★): a glider, two Mastery runes, and sixteen collection packages.
+
+## Quick start
+
+The built page is committed, so reading it needs nothing at all. To rebuild it
+from your own copy of the game:
+
+```bash
+py hltools/pak_extract.py extract data.cdb --pak "<Farever>\res.light.pak" --out analysis_out/cdb
+py hltools/build_chest_report.py
+```
+
+Requires Python 3.11+ and Pillow. Everything else — the map tiles, the
+placements, the loot tables — is located automatically next to `hlboot.dat` and
+baked into the page at build time. The page never reads the game.
+
+## Where the numbers come from
+
+Three game-derived inputs, no guesswork and no wiki scraping:
+
+| input | source | what it gives |
+|---|---|---|
+| `analysis_out/prefabs_map/*.prefab` | `res.map.pak` | every placed chest, its loot table, its world position |
+| `analysis_out/cdb/data.cdb` | `res.light.pak` | the loot tables, flattened through their nesting |
+| `assets/maps/w1_siagarta.*` | `res.map.pak` minimap tiles | the map image and the world→pixel transform |
+
+The world prefabs are **HBSON with an interned string table**, which is the
+trap worth knowing about: a byte scan finds only each string's *first*
+occurrence, and every later use is a 4-byte back-reference it cannot see. That
+undercounts placements silently. `hltools/hbson.py` parses the tree properly and
+is validated two ways — exact end-of-buffer consume on all 824 world prefabs,
+*and* plausible object keys, because consume alone still passes when the string
+indexes are off by one. Parsed counts:
+
+```
+144 chests   128 with a WorldLoot roll   19 with a hand-placed item
+132 activities (124 of them pay a guaranteed WorldLootWithAffinity)
+
+WorldCrate 79   CrimsonCrate 23   BeeCrate 10   KoboldCrate 5
+ManfishCrate 5  DemonCrate 1      Vault_* 8     Ramburg_* 5   Empty 3
+        + 5 chests wired to an *Activity* table, i.e. token at proba 1
+```
+
+The transform is not eyeballed: the game names each minimap tile
+`<tx>_<ty>_1024.png` covering world `[tx*576, (tx+1)*576)` per axis, so
+`image_px = (world - tile_origin) * 1024/576` with +y drawn down. It was
+cross-checked by projecting known obelisk coordinates onto the stitched image.
+
+**One thing the page cannot tell you.** The `WorldLoot` token is expanded
+*server-side* into one of the six `faction: World` weapons (Glory, Dominion,
+Twin Fangs of Ratsar, Judgement, **Radiance**, Credence). The pool is readable;
+the weighting inside it is not, because that code never runs on the client. The
+page says so wherever it shows the token, and does not pretend `0.35 / 6` is
+measured.
 
 ---
 
-## Status
+## The research this came out of
+
+The rest of this README is the original spike: **how Farever decides a chest has
+been opened**, and what that means for measuring drop rates. It reuses the
+machinery FareverMeter paid for — the HashLink bytecode parser, the
+`functions_ptrs` resolver, the name-resolved offset emitter, the staleness gate,
+and the game-thread rule.
+
+Everything here is **read-only**. Every Interceptor logs; nothing is called, no
+argument is replaced, no game memory is written. There is no automation, no
+packet is sent, and nothing is written back into the game.
+
+### Status
 
 Static analysis done, **and confirmed live** against the running game on
-2026-08-01 (`logs/chest-20260801-155552.log`, ~5 min, 8 chests in the layer,
-all of them already opened on that character). Results in
-"What the probe measured" below. The static section that follows it is what
-the bytecode implied; the measured section is what actually happened.
+2026-08-01 (~5 min, 8 chests in the layer, all of them already opened on that
+character). Results in "What the probe measured" below. The static section that
+follows it is what the bytecode implied; the measured section is what actually
+happened.
 
 ---
 
@@ -260,8 +335,14 @@ contaminating it.
 
 ```
 hltools/
+  pak_extract.py            list/extract entries from the Heaps .pak archives
+  gamepath.py               locate the Farever install, no hardcoded paths
+  hbson.py                  reader for the level-prefab binary format
+  build_map_assets.py       stitch the minimap tiles + emit the transform
+  build_chest_report.py     the report generator
+  chest_report.template.html  its page (data and map are injected at build)
+
   hlbc_parser.py            HashLink bytecode reader        (from FareverMeter)
-  gamepath.py               locate hlboot.dat               (from FareverMeter)
   datafresh.py              refuse to run against stale data(from FareverMeter)
   chest_survey.py           dump every chest/loot class, field and method
   find_openrecord.py        find where "already opened" is stored
@@ -270,10 +351,21 @@ hltools/
 frida/
   chest_probe.js            the read-only probe (46 hooks, ordered trace)
   run_chest.py              host; logs to logs/chest-<stamp>.log
-analysis_out/               generated; regenerate after every game patch
+assets/maps/                the stitched map + transform, committed
+report/                     the built page, committed
+analysis_out/               generated, not committed; stale after a game patch
+logs/                       probe sessions, not committed
 ```
 
-## Running it
+The first group builds the map; the second is the probe that produced the
+research below. They share `analysis_out/`, nothing else.
+
+Note that the placement counts at the top of this README are **higher** than the
+`lootTable` reference counts quoted in "Is Radiance Crimson-exclusive?" below.
+Those earlier figures came from a byte scan, before `hbson.py` existed, and they
+missed every interned back-reference. The parsed numbers are the correct ones.
+
+## Running the probe
 
 Every findex and offset in `analysis_out/` is a snapshot that **goes stale at
 each game patch**. Regenerate first, always:
@@ -414,3 +506,20 @@ authority. There is no local roll to re-run. See the section above.
 
    So the "chests in Ramburg that drop level-25 Radiance" report does not match
    the data at all — those five are the collectible glider chests.
+
+---
+
+## About the game data
+
+Farever is © its developers. The map tiles, item names and loot values in
+`assets/`, `report/` and this README are extracted from the game's own files
+and are theirs, not mine — they are here so the map is readable without owning
+a copy, and they will be removed on request.
+
+The extraction is read-only and offline: it reads `.pak` archives and
+`hlboot.dat` on disk. The probe under `frida/` attaches to a running client and
+**logs only** — no call is made, no argument replaced, no memory written, no
+packet sent, nothing automated. It exists to answer questions about how the game
+works, and the answer it produced is documented above: the client cannot roll
+loot, so re-opening a chest to farm drop rates is not possible client-side, and
+would be a dupe on a live server if it were.

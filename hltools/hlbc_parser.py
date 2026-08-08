@@ -332,9 +332,8 @@ class HLCode:
 
 
 if __name__ == "__main__":
-    import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        r"E:\SteamLibrary\steamapps\common\Farever\hlboot.dat"
+    from gamepath import find_hlboot
+    path = find_hlboot()
     code = HLCode(path).parse()
     print(f"version={code.version} has_debug={code.has_debug}")
     print("counts:", json.dumps(code.counts))
